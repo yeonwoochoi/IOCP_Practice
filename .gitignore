@@ -1,0 +1,46 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+# Build artifacts
+*.obj
+*.exe
+*.dll
+*.lib
+*.pdb
+*.idb
+*.ilk
+*.exp
+*.ipch
+*.tlog
+*.recipe
+*.log
+*.lastbuildstate
+
+# Visual C++ cache / browse files
+*.VC.db
+*.VC.opendb
+*.opendb
+*.vsidx
+ipch/
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+
+# Copilot indices
+CopilotIndices/
