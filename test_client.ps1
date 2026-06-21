@@ -16,7 +16,8 @@ param(
     [int]    $Count  = 1,
     [switch] $Merge,
     [switch] $Split,
-    [switch] $Abrupt
+    [switch] $Abrupt,
+    [switch] $Big
 )
 
 # 리스트에 [size(2)][body] 추가 (배열 반환 안 함 -> PS 캐스트 함정 회피)
@@ -97,6 +98,25 @@ for ($i = 1; $i -le $Count; $i++) {
             $client.Close()
             Write-Host ("[{0}] sent then abrupt close (RST)" -f $i)
             continue
+        }
+        elseif ($Big) {
+            # 한 연결로 많은 패킷을 보내 링버퍼가 wrap되게 (바디 크기를 바꿔 8192 경계에 패킷이 갈리도록)
+            $stream.ReadTimeout = 5000   # 에코 5초 안에 안 오면 예외 -> 진짜 멈춤 감지
+            $N = 3000
+            $fail = 0
+            for ($k = 0; $k -lt $N; $k++) {
+                $len  = 1 + ($k % 97)               # 크기 변화로 경계 정렬 회피 -> 패킷이 갈리게 유도
+                $body = ("{0}:" -f $k) + ("x" * $len)
+                Send-Bytes $stream (Get-PacketBytes $body)
+                $echo = Read-Packet $stream
+                if ($echo -ne $body) {
+                    $fail++
+                    Write-Host ("[MISMATCH] k=$k sent='$body' echo='$echo'")
+                    if ($fail -ge 5) { break }
+                }
+                if (($k % 500) -eq 0) { Write-Host ("  ...progress k=$k") }
+            }
+            Write-Host ("[{0}] big: {1} packets sent/echoed, mismatches={2}" -f $i, $N, $fail)
         }
         else {
             Send-Bytes $stream (Get-PacketBytes $Msg)
