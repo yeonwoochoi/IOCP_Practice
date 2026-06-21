@@ -1,9 +1,11 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Define.h"
 #include <stdio.h>
 #include <mutex>
 #include <queue>
+#include <functional>
+#include "../RingBuffer.h"
 
 class stClientInfo {
 public:
@@ -12,288 +14,63 @@ public:
 		mSocket = INVALID_SOCKET;
 	}
 
+	~stClientInfo() {
+		delete mRecvBuf;
+	}
+
 	void Init(UINT32 sessionIndex, HANDLE iocpHandle) {
 		mIndex = sessionIndex;
 		mIOCPHandle = iocpHandle;
+		mRecvBuf = new RingBuffer(MAX_SOCK_RECVBUF);
 	}
 
+	// 1ì¤„ ì ‘ê·¼ìë“¤ì€ í—¤ë”ì— inline ìœ ì§€
 	UINT32 GetIndex() { return mIndex; }
 	bool IsConnectd() { return mIsConnect == 1; }
-	bool IsReusable() { return mIsConnect == 0 && mClosing == false && mIORefCount == 0; } // Àç»ç¿ë Á¶°Ç (´Ù½Ã accept °É¾îµµ µÇ´ÂÁö)
+	bool IsReusable() { return mIsConnect == 0 && mClosing == false && mIORefCount == 0; } // ì¬ì‚¬ìš© ì¡°ê±´ (ë‹¤ì‹œ accept ê±¸ì–´ë„ ë˜ëŠ”ì§€)
 	SOCKET GetSocket() { return mSocket; }
-	char* GetRecvBuffer() { return mRecvBuf + mWritePos; }
-	INT32 GetRemainBufferSize() { return MAX_SOCK_RECVBUF - mWritePos; }
-	void AddRecvData(const UINT32 size) { mWritePos += size; }
+	char* GetRecvBuffer() { return (char*)mRecvBuf->GetWriteBuffer(); }
+	INT32 GetRemainBufferSize() { return (INT32)(mRecvBuf->GetContinuousWritable()); }
+	void AddRecvData(const UINT32 size) { mRecvBuf->Write(size); }
 	UINT32 GetGeneration() { return mGeneration; }
-	void Clear() {}
-
-	char* GetPacket(UINT32* outPacketSize) {
-		INT32 readable = mWritePos - mReadPos;
-		if (readable < (INT32)PACKET_HEADER_SIZE) {
-			return nullptr;
-		}
-
-		PacketHeader* header = (PacketHeader*)(mRecvBuf + mReadPos);
-		if (header->PacketSize < PACKET_HEADER_SIZE) {
-			return nullptr;
-		}
-		if (readable < header->PacketSize) {
-			return nullptr;
-		}
-
-		char* packet = mRecvBuf + mReadPos;
-		*outPacketSize = header->PacketSize;
-		mReadPos += header->PacketSize;
-		return packet;
-	}
-
-	void CompactRecvBuffer() {
-		INT32 remain = mWritePos - mReadPos;
-		if (remain > 0 && mReadPos > 0) {
-			memmove(mRecvBuf, mRecvBuf + mReadPos, remain);
-		}
-		mWritePos = remain;
-		mReadPos = 0;
-	}
-
-	// Ä¿³Î¿¡ Accept ¿¹¾à ´øÁö°í ¸®ÅÏ (AcceptorThread)
-	bool PostAccept(SOCKET listenSock) {
-		++mGeneration;
-		printf_s("Accept. client Index: %d\n", GetIndex());
-		mListenSocket = listenSock;
-
-		// AcceptEx´Â ¹Ì¸® ºó ¼ÒÄÏ ¸¸µé¾î Áà¾ßÇÔ.
-		// AcceptµÇ¸é Ä¿³Î¿¡¼­ ÀÌ ¼ÒÄÏ¿¡ acceptµÈ ¼ÒÄÏ ¿¬°áÇØÁÜ
-		mSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
-		if (mSocket == INVALID_SOCKET) {
-			printf_s("client Socket WSASocket Error : %d\n", GetLastError());
-			return false;
-		}
-
-		// mAcceptContext ÃÊ±âÈ­
-		ZeroMemory(&mAcceptOverlappedEx, sizeof(stOverlappedEx));
-		mAcceptOverlappedEx.m_wsaBuf.len = 0;
-		mAcceptOverlappedEx.m_wsaBuf.buf = nullptr;
-		mAcceptOverlappedEx.SessionIndex = mIndex;
-		mAcceptOverlappedEx.m_eOperation = IOOperation::ACCEPT;
-
-		DWORD bytes = 0;
-		DWORD flags = 0;
-		
-		AddRef();
-		// Ä¿³Î¿¡ accept ¿¹¾à ÈÄ ¸®ÅÏ (ºñµ¿±â, ³íºí·ÎÅ·) -> ¿Ï·áµÇ¸é mAcceptOverlappedEx ÅëÇØ IOCP ÅëÁö -> ¿öÄ¿ ½º·¹µå¿¡¼­ (GetQueuedCompletionStatus·Î ¹Ş¾Æ Ã³¸®)
-		if (AcceptEx(listenSock, mSocket, mAcceptBuf, 0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, &bytes, (LPWSAOVERLAPPED)&mAcceptOverlappedEx) == FALSE) {
-			if (WSAGetLastError() != WSA_IO_PENDING) {
-				printf_s("AcceptEx Error : %d\n", GetLastError());
-				ReleaseRef();
-				return false;
-			}
-		}
-		return true;
-	}
-
-	// Accept ½ÇÁ¦·Î ¿Ï·á µÇ¾úÀ»¶§ ÈÄÃ³¸® (WorkerThread)
-	bool OnAcceptCompleted() {
-		// ¿ø·¡ Accept ÇÏ¸é listenSockÀÇ ¼Ó¼º ´Ù »ó¼Ó ¹ŞÀ½
-		// AcceptEx´Â ÀÚµ¿ »ó¼Ó x -> SO_UPDATE_ACCEPT_CONTEXT È£ÃâÇØ¼­ Á÷Á¢ ÄÁÅØ½ºÆ® °»½Å ÇØÁà¾ßÇÔ.
-		printf_s("OnAcceptCompleted : SessionIndex(%d)\n", mIndex);
-		Clear();
-
-		// 1. IOCP¿¡ Å¬¶óÀÌ¾ğÆ® ¼ÒÄÏ µî·Ï
-		if (BindIOCompletionPort(mIOCPHandle) == false) {
-			printf_s("[Session %d] BindIOCompletionPort Failed! Error: %d\n", mIndex, GetLastError());
-			return false;
-		}
-
-		// 2. listensocket ¿É¼Ç »ó¼Ó (SO_UPDATE_ACCEPT_CONTEXT)
-		setsockopt(mSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&mListenSocket, sizeof(mListenSocket)); // »ó¼Ó
-
-		// 3. »ó´ë ÁÖ¼Ò Á¶È¸ (ÀÌ°Ç ¹¹ ±»ÀÌ ¾ÈÇØµµ µÇ±ä ÇÔ. °Á ·Î±× ¶ç¿ì·Á°í)
-		SOCKADDR_IN	stClientAddr{};
-		int nAddrLen = sizeof(stClientAddr);
-		getpeername(mSocket, (SOCKADDR*)&stClientAddr, &nAddrLen);
-		char clientIP[32] = { 0 };
-		inet_ntop(AF_INET, &(stClientAddr.sin_addr), clientIP, sizeof(clientIP));
-
-		printf("Client Connected : IP(%s) SOCKET(%d)\n", clientIP, (int)mSocket);
-
-		// 4. ÃÖÃÊ Recv ¿¹¾à
-		if (PostRecv() == false) {
-			printf_s("[Session %d] PostRecv Failed! Error: %d\n", mIndex, WSAGetLastError());
-			return false;
-		}
-
-		mIsConnect = 1;
-		return true;
-	}
-
-	// Accept ÈÄ IOCP¿¡ mSocket µî·Ï -> ±×·¡¾ß IO ¿Ï·á ÅëÁö ¹ŞÁö (GQCS)
-	bool BindIOCompletionPort(HANDLE iocpHandle) {
-		HANDLE hIOCP = CreateIoCompletionPort((HANDLE)mSocket, iocpHandle, (ULONG_PTR)this, 0);
-		if (hIOCP == NULL || hIOCP != iocpHandle) {
-			printf("CreateIoCompletionPort failed: %d", GetLastError());
-			return false;
-		}
-
-		return true;
-	}
-
-	bool PostRecv() {
-		DWORD dwFlag = 0;
-		DWORD dwRecvNumBytes = 0;
-
-		mRecvOverlappedEx.m_wsaBuf.buf = GetRecvBuffer();
-		mRecvOverlappedEx.m_wsaBuf.len = GetRemainBufferSize();
-		mRecvOverlappedEx.m_eOperation = IOOperation::RECV;
-
-		AddRef();
-		int nRet = WSARecv(mSocket, &mRecvOverlappedEx.m_wsaBuf, 1, &dwRecvNumBytes, &dwFlag, (LPWSAOVERLAPPED)&mRecvOverlappedEx, NULL);
-		if (nRet == SOCKET_ERROR && WSAGetLastError() != ERROR_IO_PENDING) {
-			printf("WSARecv failed: %d\n", WSAGetLastError());
-			ReleaseRef();
-			return false;
-		}
-		return true;
-	}
-	
-	bool SendMsg(const UINT32 dataSize, char* pMsg, UINT32 expectedGen) {
-		std::lock_guard<std::mutex> guard(mSendLock);
-		if (mGeneration != expectedGen || mSocket == INVALID_SOCKET) {
-			return false;
-		}
-
-		auto sendOverlappedEx = new stOverlappedEx();
-		ZeroMemory(sendOverlappedEx, sizeof(stOverlappedEx));
-		sendOverlappedEx->m_wsaBuf.len = dataSize;
-		sendOverlappedEx->m_wsaBuf.buf = new char[dataSize];
-		sendOverlappedEx->m_sendBuf = sendOverlappedEx->m_wsaBuf.buf;
-		CopyMemory(sendOverlappedEx->m_wsaBuf.buf, pMsg, dataSize);
-		sendOverlappedEx->m_eOperation = IOOperation::SEND;
-
-		mSendDataQueue.push(sendOverlappedEx);
-		// ¼ÒÄÏ´ç WSASend´Â ÇÑ ¹ø¿¡ ÇÏ³ª¸¸ (in-flight) Ã³¸®ÇÏ±â À§ÇØ ÀÌ·¸°Ô Ã³¸®.
-		if (mSendDataQueue.size() == 1) {
-			if (SendIO() == false) {
-				printf_s("[Session %d] SendMsg - SendIO Failed! Error: %d, Size: %llu\n", mIndex, WSAGetLastError(), mSendDataQueue.size());
-			}
-		}
-
-		return true;
-	}
-
-	void OnSendCompleted(const UINT32 dataSize) {
-		printf("WSASend Completed (bytes : %d)\n", dataSize);
-		std::lock_guard<std::mutex> guard(mSendLock);
-
-		auto ctx = mSendDataQueue.front();
-
-		// ºÎºĞ ¼Û½Å
-		if (dataSize < ctx->m_wsaBuf.len) {
-			// º¸³½¸¸Å­ ¾ÕÀ¸·Î ´Ù½Ã ¹Ğ°í ÀçÀü¼Û
-			ctx->m_wsaBuf.buf += dataSize;
-			ctx->m_wsaBuf.len -= dataSize;
-			if (SendIO() == false) {
-				printf_s("[Session %d] OnSendCompleted - resend Failed! Error: %d\n", mIndex, WSAGetLastError());
-			}
-			return; // send queue¿¡¼­ popÇÏ¸é ¾ÈµÊ (´Ù Àü¼ÛµÇ°í popÇØ¾ßÇÔ)
-		}
-
-
-		delete[] ctx->m_sendBuf;
-		delete ctx;
-		mSendDataQueue.pop();
-
-		if (mSendDataQueue.empty() == false) {
-			if (SendIO() == false) {
-				printf_s("[Session %d] OnSendCompleted - SendIO Failed! Error: %d, Remaining: %llu\n", mIndex, WSAGetLastError(), mSendDataQueue.size());
-			}
-		}
-	}
-
-	// ¼ÒÄÏ Close ·ÎÁ÷¸¸ (ÀÚ¿ø deleteÇÏ´Â ·ÎÁ÷Àº µû·Î ºĞ¸®)
-	// -> ¸ğµç io°¡ Á¾·áµÈ ÀÌÈÄ FinalizeClose()¿¡¼­ ÀÚ¿ø Á¤¸®ÇÒ°ÅÀÓ.
-	void Close(bool isForce = false) {
-		if (mSocket == INVALID_SOCKET)
-			return;
-
-		mClosing = true;
-
-		// Linger(0, 0)ÀÏ ¶§ (±âº»°ª): closesocket È£ÃâÇßÀ»¶§ ¼Û½Å ¹öÆÛ¿¡ ³²¾ÆÀÖ´Â ÆĞÅ¶À» ´Ùº¸³»°í FIN º¸³¿
-		// Linger(1, 5)ÀÏ ¶§: ¼Û½Å ¹öÆÛ¿¡ ³²Àº µ¥ÀÌÅÍ°¡ ´Ù °¥ ¶§±îÁö closesocket() ÇÔ¼ö°¡ ¸®ÅÏÇÏÁö ¾Ê°í ÃÖ´ë 5ÃÊ µ¿¾È ½º·¹µå¸¦ ºÙÀâ°í ±â´Ù¸²
-		// Linger(1, 0)ÀÏ ¶§: ¼Û½Å ¹öÆÛ µ¥ÀÌÅÍ¸¦ ¹ö¸®°í »ó´ë¿¡°Ô RST(°­Á¦Á¾·á) ÆĞÅ¶À» ³¯·Á TIME_WAIT ¾øÀÌ ¼ÒÄÏÀ» Áï½Ã ¼Ò¸ê
-		linger stLinger = { 0, 0 };
-		if (isForce == true)
-			stLinger.l_onoff = 1;
-
-		shutdown(mSocket, SD_BOTH);
-		setsockopt(mSocket, SOL_SOCKET, SO_LINGER, (char*)&stLinger, sizeof(stLinger));
-
-		closesocket(mSocket);
-		mSocket = INVALID_SOCKET;
-	}
-
+	void Clear() { if (mRecvBuf) mRecvBuf->Clear(); } // ì„¸ì…˜ ì¬ì‚¬ìš© ì‹œ ìˆ˜ì‹ ë²„í¼ ë¦¬ì…‹
 	void AddRef() { ++mIORefCount; }
 
-	// refCount°¡ 0ÀÌ µÆ´Âµ¥ mClosing==false¸é -> Á¤»ó µ¿ÀÛ Áß¿¡ Àá±ñ 0µÈ °Å´Ï±î Á¤¸®ÇÏ¸é ¾È µÊ
-	// refCount°¡ 0ÀÌ µÆ°í mClosing == true¸é -> ´İÀ¸¶ó°í Çß°í ÀÌÁ¦ ¸¶Áö¸· I/O±îÁö ´Ù ºüÁ³À¸´Ï ÀÌ¶§¸¸ Á¤¸®
-	// ¹İÈ¯°ª true = ¼ÒÄÏ ´İÈ÷°í ¸¶Áö¸· io ÀÛ¾÷µµ ¸¶¹«¸®µÈ°Å´Ï È£ÃâÀÚ¿¡¼­ OnClose È£ÃâÇÏ¸éµÊ.
-	bool ReleaseRef() {
-		long v = --mIORefCount;
-		if (v == 0 && mClosing) {
-			bool wasConnected = (mIsConnect == 1);
-			FinalizeClose();
-			return wasConnected;
-		}
-		return false;
-	}
+	bool ParsePacket(std::function<void(UINT32, char*)> onRecv);
+
+	bool PostAccept(SOCKET listenSock);
+	bool OnAcceptCompleted();
+	bool BindIOCompletionPort(HANDLE iocpHandle);
+	bool PostRecv();
+
+	bool SendMsg(const UINT32 dataSize, char* pMsg, UINT32 expectedGen);
+	void OnSendCompleted(const UINT32 dataSize);
+
+	void Close(bool isForce = false);
+	bool ReleaseRef();
 
 private:
-	bool SendIO() {
-		auto sendOverlappedEx = mSendDataQueue.front();
-		DWORD dwSendNumBytes = 0;
-
-		AddRef();
-		int nRet = WSASend(mSocket, &sendOverlappedEx->m_wsaBuf, 1, &dwSendNumBytes, 0, (LPWSAOVERLAPPED)&sendOverlappedEx->m_wsaOverlapped, NULL);
-		if (nRet == SOCKET_ERROR && WSAGetLastError() != ERROR_IO_PENDING) {
-			printf("[¿¡·¯] WSASend()ÇÔ¼ö ½ÇÆĞ : %d\n", WSAGetLastError());
-			ReleaseRef();
-			return false;
-		}
-
-		return true;
-	}
-
-	// refCount 0 µµ´Ş ÈÄ ¶° ÀÖ´Â I/O°¡ ¾øÀ» ¶§¸¸ È£ÃâµÊ (ÀÚ¿ø Á¤¸® Ã¥ÀÓ¸¸)
-	void FinalizeClose() {
-		std::lock_guard<std::mutex> guard(mSendLock);
-		while (mSendDataQueue.empty() == false) {
-			delete[] mSendDataQueue.front()->m_sendBuf;
-			delete mSendDataQueue.front();
-			mSendDataQueue.pop();
-		}
-		mIsConnect = 0;
-		mClosing = false; // Ç®¾îÁà¾ß ´Ù½Ã AccepterThread¿¡¼­ Àç»ç¿ë °¡´É
-	}
+	bool SendIO();
+	void FinalizeClose();
 
 	std::atomic<UINT32> mGeneration = 0;
 	INT32 mIndex = 0;
 	HANDLE mIOCPHandle = INVALID_HANDLE_VALUE;
 
-	std::atomic<INT64> mIsConnect = 0; // accept, worker ½º·¹µå µÑ´Ù »ç¿ëÇØ¼­ atomic Ã³¸®
-	std::atomic<long> mIORefCount = 0; // Áö±İ Ä¿³Î¿¡ ¶° ÀÖ´Â ºñµ¿±â I/O °³¼ö (in-flight)
-	std::atomic<bool> mClosing = false; // refCount°¡ 0ÀÏ ¶§ °Á io ÀÛ¾÷ÀÌ ÀÓ½Ã·Î ¾ø´Â°ÇÁö ´İÇô¼­ 0ÀÎ°ÇÁö ±¸ºĞ À§ÇÑ ÀÎÀÚ
+	std::atomic<INT64> mIsConnect = 0; // accept, worker ìŠ¤ë ˆë“œ ë‘˜ë‹¤ ì‚¬ìš©í•´ì„œ atomic ì²˜ë¦¬
+	std::atomic<long> mIORefCount = 0; // ì§€ê¸ˆ ì»¤ë„ì— ë–  ìˆëŠ” ë¹„ë™ê¸° I/O ê°œìˆ˜ (in-flight)
+	std::atomic<bool> mClosing = false; // refCountê°€ 0ì¼ ë•Œ ê± io ì‘ì—…ì´ ì„ì‹œë¡œ ì—†ëŠ”ê±´ì§€ ë‹«í˜€ì„œ 0ì¸ê±´ì§€ êµ¬ë¶„ ìœ„í•œ ì¸ì
 
 	SOCKET mListenSocket = INVALID_SOCKET;
 	SOCKET mSocket = INVALID_SOCKET;
 
 	stOverlappedEx mAcceptOverlappedEx;
-	char mAcceptBuf[64]; // ·ÎÄÃ ÁÖ¼Ò Á¤º¸ (sizeof(sockaddr_in) + 16 = 32) + ¿ø°İ ÁÖ¼Ò Á¤º¸ (sizeof(sockaddr_in) + 16 = 32)
+	char mAcceptBuf[64]; // ë¡œì»¬ ì£¼ì†Œ ì •ë³´ (sizeof(sockaddr_in) + 16 = 32) + ì›ê²© ì£¼ì†Œ ì •ë³´ (sizeof(sockaddr_in) + 16 = 32)
 
 	stOverlappedEx mRecvOverlappedEx;
-	char mRecvBuf[MAX_SOCK_RECVBUF];
-	INT32 mReadPos = 0;
-	INT32 mWritePos = 0;
+	char mParseBuf[MAX_SOCK_RECVBUF];
+	RingBuffer* mRecvBuf = nullptr;
 
 	std::mutex mSendLock;
-	std::queue<stOverlappedEx*> mSendDataQueue; // front¸¸ in-flight(Àü¼ÛÁß)ÀÌ º¸ÀåµÊ.
+	std::queue<stOverlappedEx*> mSendDataQueue; // frontë§Œ in-flight(ì „ì†¡ì¤‘)ì´ ë³´ì¥ë¨.
 };
