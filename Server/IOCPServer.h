@@ -6,6 +6,7 @@
 
 #include <thread>
 #include <vector>
+#include <atomic>
 
 class IOCPServer {
 public:
@@ -17,7 +18,7 @@ public:
 
 	virtual void OnConnect(const UINT32 clientIndex) {};
 	virtual void OnClose(const UINT32 clientIndex) {};
-	virtual void OnReceive(const UINT32 clientIndex, const UINT32 gen, const UINT32 size, char* pData) {};
+	virtual void OnReceive(const UINT32 clientIndex, const UINT32 gen, const UINT32 size, char* pData) {}
 
 	bool Init(const UINT32 maxIOWorkerThreadCount);
 	bool BindandListen(int nBindPort);
@@ -25,6 +26,7 @@ public:
 	void DestroyThread();
 
 	bool SendMsg(const UINT32 sessionIndex, const UINT32 gen, const UINT32 dataSize, char* pData);
+	bool SendToAll(const UINT32 dataSize, char* pData);
 
 private:
 	void CreateClient(const UINT32 maxClientCount);

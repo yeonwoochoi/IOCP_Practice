@@ -97,6 +97,19 @@ bool IOCPServer::SendMsg(const UINT32 sessionIndex, const UINT32 gen, const UINT
 	return pClient->SendMsg(dataSize, pData, gen);
 }
 
+bool IOCPServer::SendToAll(const UINT32 dataSize, char* pData)
+{
+	for (auto client: mClientInfos){
+		if (client == nullptr || client->IsConnectd() == false) {
+			continue;
+		}
+
+		client->SendMsg(dataSize, pData, client->GetGeneration());
+	}
+
+	return true;
+}
+
 void IOCPServer::CreateClient(const UINT32 maxClientCount) {
 	for (UINT32 i = 0; i < maxClientCount; ++i) {
 		auto client = new stClientInfo();

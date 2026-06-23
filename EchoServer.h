@@ -24,7 +24,7 @@ private:
 	void ProcessPacket();
 	PacketData DequePacketData();
 
-	bool mIsRunProcessThread = false;
+	std::atomic<bool> mIsRunProcessThread = false;
 
 	std::mutex mLock;
 	std::deque<PacketData> mPacketDataQueue;
