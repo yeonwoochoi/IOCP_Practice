@@ -84,12 +84,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ChatServer.cpp" />
+    <ClCompile Include="CommandManager.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Server\ClientInfo.cpp" />
     <ClCompile Include="Server\IOCPServer.cpp" />
     <ClCompile Include="EchoServer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ChatServer.h" />
+    <ClInclude Include="CommandManager.h" />
     <ClInclude Include="RingBuffer.h" />
     <ClInclude Include="Server\ClientInfo.h" />
     <ClInclude Include="Server\Define.h" />
