@@ -8,6 +8,7 @@
 #   .\test_client.ps1 -Merge           # 3패킷을 한 번의 Write로 (서버가 잘라내는지: merge)
 #   .\test_client.ps1 -Split           # 1패킷을 1바이트씩 쪼개 전송 (서버가 재조립하는지: split)
 #   .\test_client.ps1 -Abrupt -Count 30  # 보내자마자 RST로 끊기 (gen/refcount 경로)
+#   .\test_client.ps1 -Chat              # 방없음 경고 -> /create -> 채팅 브로드캐스트 확인
 
 param(
     [int]    $Port   = 11021,
@@ -17,7 +18,8 @@ param(
     [switch] $Merge,
     [switch] $Split,
     [switch] $Abrupt,
-    [switch] $Big
+    [switch] $Big,
+    [switch] $Chat
 )
 
 # 리스트에 [size(2)][body] 추가 (배열 반환 안 함 -> PS 캐스트 함정 회피)
@@ -117,6 +119,17 @@ for ($i = 1; $i -le $Count; $i++) {
                 if (($k % 500) -eq 0) { Write-Host ("  ...progress k=$k") }
             }
             Write-Host ("[{0}] big: {1} packets sent/echoed, mismatches={2}" -f $i, $N, $fail)
+        }
+        elseif ($Chat) {
+            # 채팅 흐름 검증: 방없이 보내면 경고 -> /create 응답 -> 채팅이 같은 방(자기자신)에 브로드캐스트
+            Send-Bytes $stream (Get-PacketBytes "hello before room")
+            Write-Host ("[{0}] no-room -> '{1}'" -f $i, (Read-Packet $stream))
+
+            Send-Bytes $stream (Get-PacketBytes "/create RoomA")
+            Write-Host ("[{0}] create  -> '{1}'" -f $i, (Read-Packet $stream))
+
+            Send-Bytes $stream (Get-PacketBytes "hi room")
+            Write-Host ("[{0}] chat    -> '{1}'" -f $i, (Read-Packet $stream))
         }
         else {
             Send-Bytes $stream (Get-PacketBytes $Msg)
