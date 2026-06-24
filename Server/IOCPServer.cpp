@@ -84,12 +84,12 @@ void IOCPServer::DestroyThread() {
 	for (auto& th : mIOWorkerThreads)
 		if (th.joinable()) th.join();
 
-mIsAccepterRun = false;
-if (mAccepterThread.joinable())
-mAccepterThread.join();
+	mIsAccepterRun = false;
+	if (mAccepterThread.joinable())
+	mAccepterThread.join();
 
-closesocket(mListenSocket);
-CloseHandle(mIOCPHandle); // 워커스레드 다 빠진 뒤에 닫기
+	closesocket(mListenSocket);
+	CloseHandle(mIOCPHandle); // 워커스레드 다 빠진 뒤에 닫기
 }
 
 bool IOCPServer::SendMsg(const UINT32 sessionIndex, const UINT32 gen, const UINT32 dataSize, char* pData) {

@@ -1,34 +1,21 @@
-#include "EchoServer.h"
-#include <string>
-#include <iostream>
+ï»¿#include "ChatServer.h"
 
 const UINT16 SERVER_PORT = 11021;
-const UINT16 MAX_CLIENT = 100;		// ÃÑ Á¢¼ÓÇÒ¼ö ÀÖ´Â Å¬¶óÀÌ¾ğÆ® ¼ö
+const UINT16 MAX_CLIENT = 100;		// ë™ì‹œ ì ‘ì† ê°€ëŠ¥í•œ ìµœëŒ€ í´ë¼ì´ì–¸íŠ¸ ìˆ˜
 const UINT32 MAX_IO_WORKER_THREAD = 4;
 
 int main()
 {
-	EchoServer echoServer;
+	ChatServer chatServer;
 
-	// ¼ÒÄÏÀ» ÃÊ±âÈ­
-	echoServer.Init(MAX_IO_WORKER_THREAD);
+	chatServer.Init(MAX_IO_WORKER_THREAD);
+	chatServer.BindandListen(SERVER_PORT);
 
-	// ¼ÒÄÏ°ú ¼­¹ö ÁÖ¼Ò¸¦ ¿¬°áÇÏ°í µî·Ï
-	echoServer.BindandListen(SERVER_PORT);
+	printf("ì±„íŒ… ì„œë²„ ì‹œì‘. ì½˜ì†” ì…ë ¥ -> ì „ì²´ ê³µì§€, 'quit' ì…ë ¥ ì‹œ ì¢…ë£Œ\n");
 
-	// Accept ½º·¹µå + Worker ½º·¹µå ½ÃÀÛ
-	echoServer.Run(MAX_CLIENT);
+	// SendThread(ì½˜ì†” ì…ë ¥ ë£¨í”„)ë¥¼ ì´ ìŠ¤ë ˆë“œì—ì„œ ì§ì ‘ ì‹¤í–‰ -> 'quit' ì…ë ¥ê¹Œì§€ ë¸”ë¡
+	chatServer.Run(MAX_CLIENT);
 
-	printf("¾Æ¹« Å°³ª ´©¸¦ ¶§±îÁö ´ë±âÇÕ´Ï´Ù\n");
-	while (true) {
-		std::string inputCmd;
-		std::getline(std::cin, inputCmd);
-		if (inputCmd == "quit") {
-			break;
-		}
-	}
-
-	echoServer.End();
+	chatServer.End();
 	return 0;
 }
-
